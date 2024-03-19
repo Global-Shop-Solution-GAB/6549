@@ -1,0 +1,113 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+v.Local.sOrderNum.Declare
+v.Local.sOrderLine.Declare
+v.Local.sLineNum.Declare
+v.Local.sPart.Declare
+v.Local.sWO.Declare
+v.Local.sSuffix.Declare
+v.Local.sSQL.Declare
+v.Local.sRet.Declare
+v.Local.sMsg.Declare
+v.Local.sParam.Declare
+v.Local.sDesc.Declare
+
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+'Author: Alejandro Anazco V.
+'9/7/21
+'Programmed for Nordic Hot tubs
+'Purpose: Updating work order when Sales Order configured part changes
+
+'Check Post Line Save
+f.Intrinsic.Control.If(v.Caller.Hook, =, 12231)
+	'Get Order Num, Line Num and Part Num.
+	f.Intrinsic.String.LPad(Variable.Passed.000060, "0", 7, v.Local.sOrderNum)
+	f.Intrinsic.String.LPad(Variable.Passed.000051, "0", 3, v.Local.sOrderLine)
+	f.Intrinsic.String.RPad(v.Local.sOrderLine, "0", 4, v.Local.sLineNum)
+	f.Intrinsic.String.GSSPartString(Variable.Passed.000052, Variable.Passed.000053, v.Local.sPart)
+	
+	f.ODBC.Connection!con.OpenCompanyConnection
+	 	f.Intrinsic.String.Build("Select top 1 Job from ORDER_TO_WO where Order_no = '{0}' and Order_Line = '{1}'", v.Local.sOrderNum, v.Local.sLineNum, v.Local.sSQL)
+	 	f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sWO)
+	 	
+	 	f.Intrinsic.String.Build("Select top 1 Suffix from ORDER_TO_WO where Order_no = '{0}' and Order_Line = '{1}'", v.Local.sOrderNum, v.Local.sLineNum, v.Local.sSQL)
+	 	f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sSuffix)
+	f.ODBC.Connection!con.Close
+	'Check that there is a WO.	
+	f.Intrinsic.Control.If(v.Local.sWO.Trim, =, "")
+		f.Intrinsic.Control.End
+	f.Intrinsic.Control.EndIf
+	
+	'Check if the Part Numbers Match
+	f.ODBC.Connection!con.OpenCompanyConnection
+		f.Intrinsic.String.Build("Select Top 1 Part from V_JOB_HEADER where Job = '{0}' and Suffix = '{1}'", v.Local.sWO, v.Local.sSuffix, v.Local.sSQL)
+		f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sRet)
+	f.ODBC.Connection!con.Close
+
+	f.Intrinsic.Control.If(v.Local.sRet, =, v.Local.sPart)
+		f.Intrinsic.Control.End
+	f.Intrinsic.Control.EndIf
+	
+	'Check Sales ORder Part 
+	f.ODBC.Connection!con.OpenCompanyConnection
+		f.Intrinsic.String.Build("select Top 1 Part from V_Order_lines where Order_no = '{0}' and Record_no = '{1}'", v.Local.sOrderNum, v.Local.sLineNum, v.Local.sSQL)
+		f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sRet)
+	f.ODBC.Connection!con.Close
+	
+	f.Intrinsic.Control.If(v.Local.sRet, <>, v.Local.sPart)
+		f.Intrinsic.Control.End
+		
+	f.Intrinsic.Control.EndIf
+	
+	'Check if Issue has occurred.
+	f.ODBC.Connection!con.OpenCompanyConnection
+		v.Local.sRet.Set("")
+		f.Intrinsic.String.Build("Select * from V_JOB_OPERATIONS where Job = '{0}' and Suffix = '{1}' AND HOURS_ACTUAL > '0'", v.Local.sWO, v.Local.sSuffix, v.Local.sSQL)
+		f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sRet)
+	f.ODBC.Connection!con.Close
+	
+	f.Intrinsic.Control.If(v.Local.sRet.Trim, <>, "")
+		f.Intrinsic.String.Build("Labor or Material has been Issue to the Work Order: '{0}-{1}'. Please make the change manually.", v.Local.sWO, v.Local.sSuffix, v.Local.sMsg)
+		f.Intrinsic.UI.Msgbox(v.Local.sMsg)
+		f.Intrinsic.Control.End
+	f.Intrinsic.Control.EndIf
+	
+	'Delete Work Orders.
+	f.Intrinsic.String.Build("{0}!*!{1}", v.Local.sWO, v.Local.sSuffix, v.Local.sParam)
+	f.Global.General.CallWrapperSync(5101, v.Local.sParam)
+	
+	f.ODBC.Connection!con.OpenCompanyConnection
+		f.Intrinsic.String.Build("Delete from JOB_OPERATIONS where Job = '{0}' and Suffix = '{1}'", v.Local.sWO, v.Local.sSuffix, v.Local.sSQL)
+		f.ODBC.Connection!con.Execute(v.Local.sSQL)
+	f.ODBC.Connection!con.Close
+	
+'	'Add Lines to WO.
+'	f.Intrinsic.String.Build("{0}!*!{1}!*!{2}!*!{3}B{3}", v.Local.sWO, v.Local.sSuffix, v.Local.sPart, V.Ambient.DblQuote, v.Local.sParam)
+'	f.Global.General.CallWrapperSync(5100, v.Local.sParam)
+	f.Intrinsic.Control.CallSub(AddSeq, "sWO", v.Local.sWO, "sSuffix", v.Local.sSuffix, "sPart", v.Local.sPart)
+	
+	f.ODBC.Connection!con.OpenCompanyConnection
+		f.Intrinsic.String.Build("Select top 1 Description_router from V_ROUTER_HEADER where router = '{0}'", v.Local.sPart, v.Local.sSQL)
+		f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sDesc)
+		
+		f.Intrinsic.String.Build("Update JOB_HEADER Set PART = '{0}', Router = '{0}', description = '{1}' Where job = '{2}' and suffix = '{3}'", v.Local.sPart, v.Local.sDesc, v.Local.sWO, v.Local.sSuffix, v.Local.sSQL)
+		f.ODBC.Connection!con.Execute(v.Local.sSQL)
+	f.ODBC.Connection!con.Close
+	
+f.Intrinsic.Control.EndIf
+
+Program.Sub.Main.End
+
+Program.Sub.AddSeq.Start
+v.Local.sParam.Declare
+'Add Lines to WO.
+	f.Intrinsic.String.Build("{0}!*!{1}!*!{2}!*!B", v.Args.sWO, v.Args.sSuffix, v.Args.sPart.Trim,  v.Local.sParam)
+	f.Global.General.CallWrapperSync(5100, v.Local.sParam)
+Program.Sub.AddSeq.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$aanazco$}$20211119075138575$}$7aQAV3Tor/tR9bkuakHbuzQlHVuXCGOzBvRGw+CKLWmAB9612qnAzcg9cUZfgSNdLYQFn+e3W1Q=
+Program.Sub.Comments.End
